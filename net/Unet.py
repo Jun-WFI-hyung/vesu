@@ -1,24 +1,19 @@
-import os, cv2
-from glob import glob
-import numpy as np
-
 import torch
 import torch.nn as nn
-from torchvision import transforms as transforms
-from PIL import Image
+from torchvision.transforms import CenterCrop
 
 
 class Unet(nn.Module):
-    def __init__(input_ch_:int, self, final_ch_:int):
+    def __init__(self, input_ch_:int, output_ch_:int):
         super(Unet,self).__init__()
         self.input_ch = input_ch_
-        self.final_ch = final_ch_
-        self.contract_path_mats = []
+        self.output_ch = output_ch_
+        self.contract_path_feature = []
 
         self.init_network()
         self.init_weights()
 
-        print("  **  Unet init complete  **  \n")
+        print(" * Unet init complete")
 
     
     def init_weights(self):
@@ -32,7 +27,7 @@ class Unet(nn.Module):
                 if m.bias is not None : nn.init.constant_(m.bias, 0)
 
 
-    def basic_cycle(self, sampling:bool, ch_list:list, name:str):
+    def basic_cycle(self, ch_list:list, name:str):
         k_size = 3
         stride_ = 1
         padding_ = 0
@@ -58,75 +53,102 @@ class Unet(nn.Module):
                                  bias=bias_))
         seq.add_module(name + "_BN2", nn.BatchNorm2d(num_features=ch_list[3]))
         seq.add_module(name + "_ReLU2", nn.ReLU())
-
-        if sampling == 0 : seq.add_module(name + "_MaxPool",nn.MaxPool2d(kernel_size=2))
-
-        elif sampling == 1 : seq.add_module(
-                name + "_ConvT",
-                nn.ConvTranspose2d(in_channels=ch_list[3], 
-                                   out_channels=ch_list[3], 
-                                   kernel_size=2, stride=2))
-            
-        elif sampling == 2 : seq.add_module(
-                name + "_Conv3",
-                nn.Conv2d(in_channels=ch_list[3],
-                          out_channels=self.final_ch,
-                          kernel_size=1,
-                          stride=1,
-                          padding=0,
-                          bias=True))
-        
-        else : raise Exception("Network Error : wrong mode number in init network")            
+         
         return seq
+    
+
+    def skip_connection(self, output:torch.Tensor):
+        prev_feature = self.contract_path_feature.pop()
+        transform = CenterCrop(output.shape[-1])
+        concat_feat = transform(prev_feature)
+        return torch.cat([output, concat_feat], dim=1)
 
         
     def init_network(self):
         name = "encoder"
         ch_list = [self.input_ch] + [64]*3
-        self.encoder1 = self.basic_cycle(sampling=0, ch_list=ch_list, name=name)
+        self.enc_maxPool = nn.MaxPool2d(kernel_size=2)
+        self.encoder1 = self.basic_cycle(ch_list=ch_list, name=name)
 
         ch_list = [ch_list[-1]] + [ch_list[-1]*2]*3
-        self.encoder2 = self.basic_cycle(sampling=0, ch_list=ch_list, name=name)
+        self.encoder2 = self.basic_cycle(ch_list=ch_list, name=name)
 
         ch_list = [ch_list[-1]] + [ch_list[-1]*2]*3
-        self.encoder3 = self.basic_cycle(sampling=0, ch_list=ch_list, name=name)
+        self.encoder3 = self.basic_cycle(ch_list=ch_list, name=name)
 
         ch_list = [ch_list[-1]] + [ch_list[-1]*2]*3
-        self.encoder4 = self.basic_cycle(sampling=0, ch_list=ch_list, name=name)
+        self.encoder4 = self.basic_cycle(ch_list=ch_list, name=name)
 
         name = "bottleneck"
         ch_list = [ch_list[-1]] + [ch_list[-1]*2]*2 + [ch_list[-1]]
-        self.bottleneck = self.basic_cycle(sampling=1, ch_list=ch_list, name=name)
+        self.bottleneck = self.basic_cycle(ch_list=ch_list, name=name)
+        self.neck_samp = nn.ConvTranspose2d(in_channels=ch_list[3],
+                                            out_channels=ch_list[3],
+                                            kernel_size=2, stride=2)
 
         name = "decoder"
         ch_list = [ch_list[-1]*2] + [ch_list[-1]]*2 + [ch_list[-1]//2]
-        self.decoder1 = self.basic_cycle(sampling=1, ch_list=ch_list, name=name)
+        self.decoder1 = self.basic_cycle(ch_list=ch_list, name=name)
+        self.dec1_samp = nn.ConvTranspose2d(in_channels=ch_list[3],
+                                            out_channels=ch_list[3],
+                                            kernel_size=2, stride=2)
 
         ch_list = [ch_list[-1]*2] + [ch_list[-1]]*2 + [ch_list[-1]//2]
-        self.decoder2 = self.basic_cycle(sampling=1, ch_list=ch_list, name=name)
+        self.decoder2 = self.basic_cycle(ch_list=ch_list, name=name)
+        self.dec2_samp = nn.ConvTranspose2d(in_channels=ch_list[3],
+                                            out_channels=ch_list[3],
+                                            kernel_size=2, stride=2)
 
         ch_list = [ch_list[-1]*2] + [ch_list[-1]]*2 + [ch_list[-1]//2]
-        self.decoder3 = self.basic_cycle(sampling=1, ch_list=ch_list, name=name)
+        self.decoder3 = self.basic_cycle(ch_list=ch_list, name=name)
+        self.dec3_samp = nn.ConvTranspose2d(in_channels=ch_list[3],
+                                            out_channels=ch_list[3],
+                                            kernel_size=2, stride=2)
 
         ch_list = [ch_list[-1]*2] + [ch_list[-1]]*3
-        self.decoder4 = self.basic_cycle(sampling=2, ch_list=ch_list, name=name)
+        self.decoder4 = self.basic_cycle(ch_list=ch_list, name=name)
+        self.dec4_samp = nn.Conv2d(in_channels=ch_list[3],
+                                   out_channels=self.output_ch,
+                                   kernel_size=1,
+                                   stride=1,
+                                   padding=0,
+                                   bias=True)
 
     
     def forward(self, mat_:torch.tensor):
         output = self.encoder1(mat_)
+        self.contract_path_feature.append(output)
+        output = self.enc_maxPool(output)
+
         output = self.encoder2(output)
+        self.contract_path_feature.append(output)
+        output = self.enc_maxPool(output)
+
         output = self.encoder3(output)
+        self.contract_path_feature.append(output)
+        output = self.enc_maxPool(output)
+
         output = self.encoder4(output)
+        self.contract_path_feature.append(output)
+        output = self.enc_maxPool(output)
 
         output = self.bottleneck(output)
+        output = self.neck_samp(output)
 
+        output = self.skip_connection(output)
         output = self.decoder1(output)
+        output = self.dec1_samp(output)
+
+        output = self.skip_connection(output)
         output = self.decoder2(output)
+        output = self.dec2_samp(output)
+
+        output = self.skip_connection(output)
         output = self.decoder3(output)
+        output = self.dec3_samp(output)
+
+        output = self.skip_connection(output)
         output = self.decoder4(output)
+        output = self.dec4_samp(output)
+
         return output
-
-
-# Test
-if __name__ == "__main__" :
-    a = Unet(input_ch_=65, final_ch_=1)

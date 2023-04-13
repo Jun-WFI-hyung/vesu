@@ -1,0 +1,19 @@
+{
+    "mode": "train",
+    "load": false,
+    "dataset_path": "./vesuvius-challenge-ink-detection",
+    "pth_load_path": "./pth",
+    "result_save_path": "./results",
+    "train_pth": "",
+    "test_pth1": "",
+    "test_pth2": "",
+    "test_pth3": "",
+    "epoch": 50,
+    "lr":1e-4,
+    "size": 388,
+    "eval_num": 3,
+    "batch_size": 4,
+    "drop_last": true,
+    "num_workers": 0,
+    "cudnn_enable": true
+}

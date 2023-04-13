@@ -3,14 +3,7 @@ import numpy as np
 from glob import glob
 from tqdm import tqdm
 from itertools import product
-
-from torch.utils.data import Dataset
-
-
-
-def calc_pad(depth:int=4):
-    return 4 * (2**depth + sum([2**(d+1) for d in range(depth)])) // 2
-
+from torch.utils.data import Dataset, DataLoader
 
 
 class UnetData(Dataset):
@@ -19,18 +12,18 @@ class UnetData(Dataset):
         self.pad = pad
         self.size = size
         self.mode = mode
-        self.iter = 0
         self.eval_num = eval_num
         self.total_epoch = total_epoch
         tif_folder = "surface_volume"
 
-        tree_file = "tree.json"
+        tree_file = os.path.join(data_path, "tree.json")
         with open(tree_file) as f: paths = json.load(f)
 
         self.input = []
         self.label = []
 
         if mode == "train":
+            self.iter = 0
             train_dir = paths[mode]
             train_dir.remove(str(self.eval_num))
             data_path_ = os.path.join(data_path, "train")
@@ -62,11 +55,12 @@ class UnetData(Dataset):
 
 
     def __getitem__(self, index):
-        if self.mode != "test":
+        if self.mode == "train":
             y, x = self.coord[index]
             input = self.input[self.img_num][:, y:y+self.size+self.pad*2, x:x+self.size+self.pad*2]
             label = self.label[self.img_num][y:y+self.size, x:x+self.size]
-            return np.array(input/255, dtype=np.float32), np.array(label, dtype=np.float32)
+            self.iter += 1
+            return np.array(input/255, dtype=np.float32), np.array([label], dtype=np.float32)
         else:
             y, x = self.coord[index]
             input = self.input[self.img_num][:, y:y+self.size+self.pad*2, x:x+self.size+self.pad*2]
@@ -80,28 +74,28 @@ class UnetData(Dataset):
 
 
     def generate_train_order(self, dir_list):
-        a = list(map(int, dir_list))
+        a = [i for i in range(len(dir_list))]
         q, r = divmod(self.total_epoch, 2)
         a = a * (q+r)
         np.random.shuffle(a)
-        self.order = list(np.array(a, dtype=np.uint8)-1)
+        self.order = list(np.array(a, dtype=np.uint8))
 
 
     
     def generate_train_dataset(self, dir_list:list, data_path_:str, tif_folder:str):
         print(f" - load train dataset image : {dir_list}")
-        for i in tqdm(dir_list, total=len(dir_list), desc="dataset", ascii=" =", position=0, leave=True):
+        for bottom_dir in tqdm(dir_list, total=len(dir_list), desc=" - dataset", ascii=" =", position=0, leave=True):
             img = []
 
             # file list
-            tif_path = sorted(glob(os.path.join(data_path_, i, tif_folder, "*.tif")))
+            tif_path = sorted(glob(os.path.join(data_path_, bottom_dir, tif_folder, "*.tif")))
 
             # read file
-            for j in tqdm(tif_path, total=len(tif_path), desc=f"image {i}", ascii=" =", position=1, leave=False):
-                input_ = self.input_resize(mat=cv2.imread(j, flags=cv2.IMREAD_GRAYSCALE))
+            for tif_file in tqdm(tif_path, total=len(tif_path), desc=f" - image {bottom_dir}", ascii=" =", position=1, leave=False):
+                input_ = self.input_resize(mat=cv2.imread(tif_file, flags=cv2.IMREAD_GRAYSCALE))
                 img.append(input_)
             
-            label_path = os.path.join(data_path_, i, "inklabels.png")
+            label_path = os.path.join(data_path_, bottom_dir, "inklabels.png")
             label_ = cv2.imread(label_path, flags=cv2.IMREAD_GRAYSCALE)
 
             self.input.append(np.array(img, dtype=np.uint8))
@@ -117,7 +111,7 @@ class UnetData(Dataset):
         tif_path = sorted(glob(os.path.join(data_path_, str(self.eval_num), tif_folder, "*.tif")))
 
         # read file
-        for j in tqdm(tif_path, total=len(tif_path), desc=f"eval img {self.eval_num}", ascii=" =", leave=True):
+        for j in tqdm(tif_path, total=len(tif_path), desc=" - dataset", ascii=" =", leave=True):
             input_ = self.input_resize(mat=cv2.imread(j, flags=cv2.IMREAD_GRAYSCALE))
             img.append(input_)
         
@@ -132,7 +126,7 @@ class UnetData(Dataset):
     def generate_test_dataset(self, dir_list:list, data_path_:str, tif_folder:str):
         print(f" - load test dataset image : {dir_list}")
         self.test_shape = []
-        for i in tqdm(dir_list, total=len(dir_list), desc="dataset", ascii=" =", position=0, leave=True):
+        for i in tqdm(dir_list, total=len(dir_list), desc=" - dataset", ascii=" =", position=0, leave=True):
             img = []
 
             # file list
@@ -156,7 +150,6 @@ class UnetData(Dataset):
 
     def generate_train_coord(self):
         self.img_num = self.order.pop()
-
         max_width = self.label[self.img_num].shape[1] - self.size + 1
         max_height = self.label[self.img_num].shape[0] - self.size + 1
 
@@ -176,8 +169,8 @@ class UnetData(Dataset):
         coord = list(zip(y,x))
         self.coord = []
         
-        print(f" - img {self.img_num+1} - shuffle data : check empty label")
-        for y, x in tqdm(coord, total=len(coord), desc="coord", ascii=" =", leave=True):
+        print(f" - img {self.img_num+1} - generate train coord : check empty label")
+        for y, x in tqdm(coord, total=len(coord), desc="coord", ascii=" =", leave=False):
             if np.count_nonzero(self.label[self.img_num][y:y+self.size, x:x+self.size]):
                 self.coord.append([y,x])
 
@@ -199,18 +192,21 @@ class UnetData(Dataset):
         yq, self.y_remainder = divmod(label_shape[0], self.size)
         xq, self.x_remainder = divmod(label_shape[1], self.size)
 
-        y_list = [self.size*i for i in range(yq)]
-        if self.y_remainder : y_list.append(label_shape[0]-self.size)
+        self.y_list = [self.size*i for i in range(yq)]
+        if self.y_remainder : self.y_list.append(label_shape[0]-self.size)
 
-        x_list = [self.size*i for i in range(xq)]
-        if self.x_remainder : x_list.append(label_shape[1]-self.size)
+        self.x_list = [self.size*i for i in range(xq)]
+        if self.x_remainder : self.x_list.append(label_shape[1]-self.size)
 
-        self.coord = list(product(y_list, x_list))
+        self.coord = list(product(self.y_list, self.x_list))
+        print(f" - generate eval coord")
+        # print(f" - label_shape = {label_shape}")
+        # print(f" - yq = {yq} / y_remainder = {self.y_remainder} / y_list = {len(self.y_list)}")
+        # print(f" - xq = {xq} / x_remainder = {self.x_remainder} / x_list = {len(self.x_list)}")
 
 
 
     def generate_test_coord(self):
-
         # main.py에서 test image개수만큼 반복시킨다.
 
         self.img_num += 1
@@ -227,9 +223,32 @@ class UnetData(Dataset):
 
         self.coord = list(product(y_list, x_list))
 
-    
 
-dataset = UnetData(".", 50, calc_pad(), 388, mode="test")
-print(len(dataset))
-i = dataset[2]
-print(i.shape, type(i))
+
+    def get_eval_label(self):
+        return self.label[0]
+
+
+
+
+def get_dataloader(data_path:str, 
+                   total_epoch:int, 
+                   pad:int, size:int, 
+                   mode:str="train", 
+                   eval_num:int=3, 
+                   batch_size:int=1,
+                   drop:bool=True,
+                   num_workers:int=0):
+    
+    dataset = UnetData(data_path=data_path, total_epoch=total_epoch, pad=pad, size=size, mode=mode, eval_num=eval_num)
+
+    if mode == "train":
+        loader = DataLoader(dataset=dataset, batch_size=batch_size, drop_last=drop, shuffle=False, num_workers=num_workers)
+    elif mode == "eval" or mode == "test":
+        loader = DataLoader(dataset=dataset, batch_size=1, shuffle=False, num_workers=num_workers)
+
+    return dataset, loader
+
+
+def calc_pad(depth:int=4):
+    return 4 * (2**depth + sum([2**(d+1) for d in range(depth)])) // 2
