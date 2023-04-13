@@ -23,8 +23,8 @@ class train:
         self.pth_load_path = cfg["pth_load_path"]
         if not os.path.exists(self.pth_load_path): os.mkdir(self.pth_load_path)
 
-        result_save_path = cfg["result_save_path"]
-        if not os.path.exists(result_save_path): os.mkdir(result_save_path)
+        self.result_save_path = cfg["result_save_path"]
+        if not os.path.exists(self.result_save_path): os.mkdir(self.result_save_path)
 
         self.epoch = cfg["epoch"]
         lr = cfg["lr"]
@@ -94,12 +94,16 @@ class train:
             
             self.train_data.generate_train_coord()
 
+            self.save_result(self.result_save_path, e, 
+                             self.eval_data.eval_num, 
+                             output, loss, IOU)
+
 
                 
     def iterate_train_data(self, loader:DataLoader):
         loss_arr = []
         pbar_loader = tqdm(enumerate(loader), 
-                        desc=f"loss : 0.00000 / IOU : 0.00%", 
+                        desc=f" - loss : 0.00000 / IOU : 0.00%", 
                         total=len(loader), ascii=" =", 
                         position=1, leave=False)
 
@@ -114,14 +118,14 @@ class train:
             self.optim.zero_grad()
 
             loss_arr += [loss.item()]
-            pbar_loader.desc = f"loss : {np.mean(loss_arr):.5f} / IOU : {IOU.item()*100:.2f}%"
+            pbar_loader.desc = f" - loss : {np.mean(loss_arr):.5f} / IOU : {IOU.item()*100:.2f}%"
 
 
 
     def iterate_eval_data(self, loader:DataLoader, dataset:UnetData):
         eval_output:torch.Tensor
         pbar_loader = tqdm(enumerate(loader), 
-                        desc=f"loss : 0.00000 / IOU : 0.00%", 
+                        desc=f" - eval : ", 
                         total=len(loader), ascii=" =", 
                         position=1, leave=False)
 
@@ -167,5 +171,20 @@ class train:
     
 
 
-    def save_result(self):
-        return
+    def save_result(self, results_path:str, 
+                    epoch:int, eval_num:int, 
+                    output:torch.Tensor, loss:float, IOU:float):
+        
+        log_file_name = "log.txt"
+        img_file_name = "eval%02d_epoch%03d.png"%(eval_num, epoch)
+
+        with open(os.path.join(results_path, log_file_name), mode='a+', encoding="utf-8") as f:
+            f.write(f"epoch : {epoch} / ")
+            f.write(f"eval_num : {eval_num} / ")
+            f.write(f"loss : {loss:.5f} / ")
+            f.write(f"IOU : {IOU:.2f}\n")
+        
+        img = np.array((output > 0.5).cpu(), dtype=np.uint8)[0,0,:,:]*255
+        print(f"img unique : {np.unique(img)}")
+        print(f"img shape  : {img.shape}")
+        cv2.imwrite(os.path.join(results_path, img_file_name), img)
