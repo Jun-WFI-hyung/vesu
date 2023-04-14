@@ -1,22 +1,20 @@
-from net.Unet import Unet
-from net.UnetData import UnetData
-# from utils.save_load import *
-# from utils.IOU import *
-# from utils.read_arg import *
-
-import json, time
-import numpy as np
-
-import torch
-from torch.utils.data import DataLoader
-import torch.backends.cudnn as cudnn
-from torchvision import transforms as transforms
+import json
+from train import *
+from test import *
 
 # main
-# 1. argparse
-# 2. json load
-# 3. run train / inference
+# 1. json load
+# 2. run train / test
 
 if __name__ == "__main__":
-    # self.pad = 4 * (2**depth + sum([2**(d+1) for d in range(depth)])) // 2
-    print("")
+    with open("config.json") as f: cfg = json.load(f)
+    mode = cfg["mode"].lower()
+    
+    if mode == "train": 
+        train_ = train(cfg)
+        train_.run()
+        
+    elif mode == "test": print()
+        # test_pth1 = cfg["test_pth1"]
+        # test_pth2 = cfg["test_pth2"]
+        # test_pth3 = cfg["test_pth3"]

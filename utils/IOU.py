@@ -1,14 +1,11 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class DiceLoss_BIN(nn.Module):
-    def __init__(self, class_num, device):
+    def __init__(self, device):
         super(DiceLoss_BIN,self).__init__()
-        self.class_num = class_num
         self.device = device
-        if class_num != 1: raise Exception("Not binary class -- DiceLoss")
     
     def forward(self, output:torch.Tensor, label:torch.Tensor):
         bce = nn.BCEWithLogitsLoss().to(self.device)
