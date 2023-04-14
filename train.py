@@ -27,12 +27,14 @@ class train:
         if not os.path.exists(self.result_save_path): os.mkdir(self.result_save_path)
 
         self.epoch = cfg["epoch"]
+        self.iter_lim = cfg["iter_lim"]
         lr = cfg["lr"]
         size = cfg["size"]
         eval_num = cfg["eval_num"]
         batch_size = cfg["batch_size"]
         drop_last = cfg["drop_last"]
         num_workers = cfg["num_workers"]
+        self.force_quit = False
 
         self.model = Unet(input_ch_=65, output_ch_=1).to(self.device)
         self.loss_func = DiceLoss_BIN(device=self.device).to(self.device)
@@ -66,44 +68,51 @@ class train:
         if load : 
             train_pth = cfg["train_pth"]
             if not train_pth : raise Exception ("Fill in train_pth in config.json")
+            self.model, self.optim, self.start_epoch, iter_ = \
+                load_model(self.pth_load_path, train_pth, self.model, self.optim)
+            self.train_data.iter = iter_
+            self.iter_lim += iter_
 
 
     
     def run(self):
         print(f" * Start train : Total epoch = {self.epoch}")
         pbar_epoch = tqdm(range(self.start_epoch+1, self.start_epoch+self.epoch+1),
-                          desc=f"{self.start_epoch+1} / {self.start_epoch+self.epoch}",
+                          desc=f" - {self.start_epoch+1} / {self.start_epoch+self.epoch}",
                           ascii=" =", position=0, leave=True)
         
         for e in pbar_epoch:
-            pbar_epoch.desc = f"{e} / {self.start_epoch+self.epoch}"
+            pbar_epoch.desc = f" - {e} / {self.start_epoch+self.epoch}"
 
-            # self.model.train()
-            # self.iterate_train_data(loader=self.train_loader)
+            self.model.train()
+            self.iterate_train_data(loader=self.train_loader)
             
             self.model.eval()
             with torch.no_grad():
                 output, loss, IOU = self.iterate_eval_data(loader=self.eval_loader,
                                                            dataset=self.eval_data)
-            save_model(self.pth_load_path, 
-                       self.model, 
-                       self.optim, 
-                       e, 
-                       self.eval_data.eval_num, 
-                       self.train_data.iter)
             
             self.train_data.generate_train_coord()
 
             self.save_result(self.result_save_path, e, 
                              self.eval_data.eval_num, 
                              output, loss, IOU)
+            
+            if e % 10 == 0 or self.force_quit:
+                save_model(self.pth_load_path, 
+                        self.model, 
+                        self.optim, 
+                        e, 
+                        self.eval_data.eval_num, 
+                        self.train_data.iter)
+                if self.force_quit: break
 
 
                 
     def iterate_train_data(self, loader:DataLoader):
         loss_arr = []
         pbar_loader = tqdm(enumerate(loader), 
-                        desc=f" - loss : 0.00000 / IOU : 0.00%", 
+                        desc=f" - loss : 0.00000 / IOU : 0.00% / iter : 000000", 
                         total=len(loader), ascii=" =", 
                         position=1, leave=False)
 
@@ -118,7 +127,11 @@ class train:
             self.optim.zero_grad()
 
             loss_arr += [loss.item()]
-            pbar_loader.desc = f" - loss : {np.mean(loss_arr):.5f} / IOU : {IOU.item()*100:.2f}%"
+            iter_ = self.train_data.iter
+            pbar_loader.desc = f" - loss : {np.mean(loss_arr):.5f} / IOU : {IOU.item()*100:.2f}% / iter : {iter_:06d}"
+            if iter_ >= self.iter_lim: 
+                self.force_quit = True
+                break
 
 
 
@@ -182,9 +195,7 @@ class train:
             f.write(f"epoch : {epoch} / ")
             f.write(f"eval_num : {eval_num} / ")
             f.write(f"loss : {loss:.5f} / ")
-            f.write(f"IOU : {IOU:.2f}\n")
+            f.write(f"IOU : {IOU:.2f}%\n")
         
         img = np.array((output > 0.5).cpu(), dtype=np.uint8)[0,0,:,:]*255
-        print(f"img unique : {np.unique(img)}")
-        print(f"img shape  : {img.shape}")
         cv2.imwrite(os.path.join(results_path, img_file_name), img)

@@ -168,8 +168,7 @@ class UnetData(Dataset):
         
         coord = list(zip(y,x))
         self.coord = []
-        
-        print(f" - img {self.img_num+1} - generate train coord : check empty label")
+
         for y, x in tqdm(coord, total=len(coord), desc="coord", ascii=" =", leave=False):
             if np.count_nonzero(self.label[self.img_num][y:y+self.size, x:x+self.size]):
                 self.coord.append([y,x])
@@ -199,7 +198,7 @@ class UnetData(Dataset):
         if self.x_remainder : self.x_list.append(label_shape[1]-self.size)
 
         self.coord = list(product(self.y_list, self.x_list))
-        print(f" - generate eval coord")
+        # print(f" - generate eval coord")
         # print(f" - label_shape = {label_shape}")
         # print(f" - yq = {yq} / y_remainder = {self.y_remainder} / y_list = {len(self.y_list)}")
         # print(f" - xq = {xq} / x_remainder = {self.x_remainder} / x_list = {len(self.x_list)}")

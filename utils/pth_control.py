@@ -1,6 +1,7 @@
 import torch, os
 
 
+
 def save_model(pth_path, model, optim, epoch, eval_num, iter):
     if not os.path.exists(pth_path):
         os.makedirs(pth_path)
@@ -11,4 +12,20 @@ def save_model(pth_path, model, optim, epoch, eval_num, iter):
                 "iter" : iter,
                 "epoch" : epoch}, cp_path)
     
-    print(" - save model\n")
+
+
+def load_model(pth_path, pth_name, model, optim=None):
+    if not os.path.exists(pth_path):
+        raise Exception("Please check pth_path")
+    
+    data = torch.load(os.path.join(pth_path, pth_name))
+
+    model.load_state_dict(data["model"])
+
+    if optim is not None: 
+        optim.load_state_dict(data["optim"])
+        epoch = data["epoch"]
+        iter = data["iter"]
+        return model, optim, epoch, iter
+    
+    else: return model
